@@ -3,11 +3,13 @@ import json
 from telebot import TeleBot, types
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
+import requests
+from io import BytesIO
 
-TOKEN = os.environ.get("TOKEN")  # Токен от BotFather
+TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
     raise ValueError("Переменная окружения TOKEN не установлена!")
 
@@ -34,17 +36,17 @@ users = load_json(USERS_FILE)
 def start(message):
     chat_id = message.chat.id
     bot.send_message(chat_id,
-        "Привет! 🦈 Я Shark — бот для генерации презентаций.\n"
+        "Привет! 🦈 Shark — бот для генерации презентаций с картинками и описанием.\n"
         "Используй /generate чтобы создать презентацию.\n"
-        "Для справки по командам используй /help")
+        "Список команд: /help")
 
 @bot.message_handler(commands=['help'])
 def help_cmd(message):
     chat_id = message.chat.id
     help_text = (
-        "/start - приветствие и помощь\n"
+        "/start - приветствие\n"
         "/generate - создать презентацию\n"
-        "/help - список всех команд"
+        "/help - список команд"
     )
     bot.send_message(chat_id, help_text)
 
@@ -52,29 +54,28 @@ def help_cmd(message):
 @bot.message_handler(commands=['generate'])
 def generate(message):
     chat_id = message.chat.id
-    bot.send_message(chat_id, "Напиши тему презентации (например 'Космос').\nЕсли не знаешь — можешь забить в Google и вернуться.")
+    bot.send_message(chat_id, "Напиши тему презентации (например 'Космос').")
     bot.register_next_step_handler(message, ask_slides)
 
 def ask_slides(message):
     chat_id = message.chat.id
     topic = message.text.strip()
     if not topic:
-        bot.send_message(chat_id, "Ошибка: нужно ввести текст темы.")
+        bot.send_message(chat_id, "Ошибка: введи тему презентации.")
         return
-
     users[chat_id] = {"topic": topic}
     save_json(USERS_FILE, users)
 
-    # Кнопки с количеством слайдов от 1 до 25
+    # Кнопки с количеством слайдов
     keyboard = types.InlineKeyboardMarkup(row_width=5)
-    buttons = [types.InlineKeyboardButton(str(i), callback_data=f"slides_{i}") for i in range(1, 26)]
+    buttons = [types.InlineKeyboardButton(str(i), callback_data=f"slides_{i}") for i in range(1, 11)]
     keyboard.add(*buttons)
-    bot.send_message(chat_id, "Сколько слайдов? Выбери число:", reply_markup=keyboard)
+    bot.send_message(chat_id, "Выбери количество слайдов (1-10):", reply_markup=keyboard)
 
 # --------------------- Обработка выбора слайдов ---------------------
 @bot.callback_query_handler(func=lambda call: call.data.startswith("slides_"))
 def slides_chosen(call):
-    bot.answer_callback_query(call.id)  # обязательно, чтобы кнопка не зависала
+    bot.answer_callback_query(call.id)
     chat_id = call.message.chat.id
     slide_count = int(call.data.replace("slides_", ""))
     users[chat_id]["slides"] = slide_count
@@ -88,10 +89,10 @@ def slides_chosen(call):
     keyboard.add(types.InlineKeyboardButton("Cyberpunk", callback_data="style_cyberpunk"))
     bot.send_message(chat_id, "Выбери стиль презентации:", reply_markup=keyboard)
 
-# --------------------- Генерация PPTX ---------------------
+# --------------------- Генерация PPTX с картинками и описанием ---------------------
 @bot.callback_query_handler(func=lambda call: call.data.startswith("style_"))
 def style_chosen(call):
-    bot.answer_callback_query(call.id, text="Стиль выбран!")  # обязательно
+    bot.answer_callback_query(call.id, text="Стиль выбран!")
     chat_id = call.message.chat.id
     style = call.data.replace("style_", "")
     users[chat_id]["style"] = style
@@ -118,17 +119,35 @@ def style_chosen(call):
         bg_color = RGBColor(0, 0, 0)
         font_color = RGBColor(255, 0, 255)
 
-    # Создание слайдов
-    for i in range(1, slide_count + 1):
+    # Простейший контент (можно подключить API для автоматического описания)
+    content_examples = [
+        ("Луна", "Луна — это естественный спутник Земли."),
+        ("Солнце", "Солнце — это звезда, вокруг которой вращается Земля."),
+        ("Марс", "Марс — четвёртая планета от Солнца, известная как Красная планета."),
+        ("Космонавт", "Космонавт — человек, который путешествует в космос."),
+        ("Телескоп", "Телескоп позволяет наблюдать далекие объекты во Вселенной.")
+    ]
+
+    for i in range(slide_count):
         slide = prs.slides.add_slide(prs.slide_layouts[6])
-        shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(14), Inches(2))
+
+        # Прямоугольник под текст
+        shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.5), Inches(1), Inches(7), Inches(4))
         shape.fill.solid()
-        shape.fill.fore_color.rgb = font_color
+        shape.fill.fore_color.rgb = bg_color
         text_frame = shape.text_frame
-        text_frame.text = f"{topic} — Слайд {i}"
-        text_frame.paragraphs[0].font.size = Pt(40)
-        text_frame.paragraphs[0].font.color.rgb = bg_color
-        text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+        text_frame.text, desc = content_examples[i % len(content_examples)]
+        p = text_frame.add_paragraph()
+        p.text = desc
+        p.font.size = Pt(24)
+        p.font.color.rgb = font_color
+
+        # Добавим пример изображения через URL
+        img_url = "https://upload.wikimedia.org/wikipedia/commons/9/99/Moon.jpg"  # пример
+        response = requests.get(img_url)
+        if response.status_code == 200:
+            img_stream = BytesIO(response.content)
+            slide.shapes.add_picture(img_stream, Inches(8), Inches(1), width=Inches(7), height=Inches(4))
 
     os.makedirs("presentations", exist_ok=True)
     output_path = f"presentations/{chat_id}_{topic}.pptx"
