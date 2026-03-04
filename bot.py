@@ -5,8 +5,12 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
 
-TOKEN = os.environ["TOKEN"]  # Токен от BotFather
+TOKEN = os.environ.get("TOKEN")  # Токен от BotFather
+if not TOKEN:
+    raise ValueError("Переменная окружения TOKEN не установлена!")
+
 bot = TeleBot(TOKEN)
 
 USERS_FILE = "users.json"
@@ -48,7 +52,7 @@ def help_cmd(message):
 @bot.message_handler(commands=['generate'])
 def generate(message):
     chat_id = message.chat.id
-    bot.send_message(chat_id, "Напиши тему презентации (например 'Космос').\nЕсли не знаешь, можешь забить в Google и вернуться.")
+    bot.send_message(chat_id, "Напиши тему презентации (например 'Космос').\nЕсли не знаешь — можешь забить в Google и вернуться.")
     bot.register_next_step_handler(message, ask_slides)
 
 def ask_slides(message):
@@ -63,15 +67,16 @@ def ask_slides(message):
 
     # Кнопки с количеством слайдов от 1 до 25
     keyboard = types.InlineKeyboardMarkup(row_width=5)
-    buttons = [types.InlineKeyboardButton(str(i), callback_data=str(i)) for i in range(1, 26)]
+    buttons = [types.InlineKeyboardButton(str(i), callback_data=f"slides_{i}") for i in range(1, 26)]
     keyboard.add(*buttons)
     bot.send_message(chat_id, "Сколько слайдов? Выбери число:", reply_markup=keyboard)
 
 # --------------------- Обработка выбора слайдов ---------------------
-@bot.callback_query_handler(func=lambda call: call.data.isdigit())
+@bot.callback_query_handler(func=lambda call: call.data.startswith("slides_"))
 def slides_chosen(call):
+    bot.answer_callback_query(call.id)  # обязательно, чтобы кнопка не зависала
     chat_id = call.message.chat.id
-    slide_count = int(call.data)
+    slide_count = int(call.data.replace("slides_", ""))
     users[chat_id]["slides"] = slide_count
     save_json(USERS_FILE, users)
 
@@ -81,18 +86,17 @@ def slides_chosen(call):
     keyboard.add(types.InlineKeyboardButton("Light", callback_data="style_light"))
     keyboard.add(types.InlineKeyboardButton("Minimal", callback_data="style_minimal"))
     keyboard.add(types.InlineKeyboardButton("Cyberpunk", callback_data="style_cyberpunk"))
-
     bot.send_message(chat_id, "Выбери стиль презентации:", reply_markup=keyboard)
 
 # --------------------- Генерация PPTX ---------------------
 @bot.callback_query_handler(func=lambda call: call.data.startswith("style_"))
 def style_chosen(call):
+    bot.answer_callback_query(call.id, text="Стиль выбран!")  # обязательно
     chat_id = call.message.chat.id
     style = call.data.replace("style_", "")
     users[chat_id]["style"] = style
     save_json(USERS_FILE, users)
 
-    # Генерация презентации
     topic = users[chat_id]["topic"]
     slide_count = users[chat_id]["slides"]
 
@@ -116,7 +120,7 @@ def style_chosen(call):
 
     # Создание слайдов
     for i in range(1, slide_count + 1):
-        slide = prs.slides.add_slide(prs.slide_layouts[6])  # пустой слайд
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
         shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(14), Inches(2))
         shape.fill.solid()
         shape.fill.fore_color.rgb = font_color
@@ -124,9 +128,8 @@ def style_chosen(call):
         text_frame.text = f"{topic} — Слайд {i}"
         text_frame.paragraphs[0].font.size = Pt(40)
         text_frame.paragraphs[0].font.color.rgb = bg_color
-        text_frame.paragraphs[0].alignment = types.PP_ALIGN.CENTER
+        text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
 
-    # Сохраняем PPTX
     os.makedirs("presentations", exist_ok=True)
     output_path = f"presentations/{chat_id}_{topic}.pptx"
     prs.save(output_path)
@@ -136,4 +139,5 @@ def style_chosen(call):
         bot.send_document(chat_id, f)
 
 # --------------------- Запуск бота ---------------------
+print("Shark бот запущен...")
 bot.infinity_polling()
