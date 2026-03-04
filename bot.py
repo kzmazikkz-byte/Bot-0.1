@@ -36,7 +36,7 @@ users = load_json(USERS_FILE)
 def start(message):
     chat_id = message.chat.id
     bot.send_message(chat_id,
-        "Привет! 🦈 Shark — бот для генерации презентаций с картинками и описанием.\n"
+        "Привет! 🦈 Shark 4.1 — бот для генерации презентаций с картинками и описаниями.\n"
         "Используй /generate чтобы создать презентацию.\n"
         "Список команд: /help")
 
@@ -119,35 +119,38 @@ def style_chosen(call):
         bg_color = RGBColor(0, 0, 0)
         font_color = RGBColor(255, 0, 255)
 
-    # Простейший контент (можно подключить API для автоматического описания)
+    # Контент с текстом и картинками
     content_examples = [
-        ("Луна", "Луна — это естественный спутник Земли."),
-        ("Солнце", "Солнце — это звезда, вокруг которой вращается Земля."),
-        ("Марс", "Марс — четвёртая планета от Солнца, известная как Красная планета."),
-        ("Космонавт", "Космонавт — человек, который путешествует в космос."),
-        ("Телескоп", "Телескоп позволяет наблюдать далекие объекты во Вселенной.")
+        ("Луна", "Луна — это естественный спутник Земли.", "https://upload.wikimedia.org/wikipedia/commons/9/99/Moon.jpg"),
+        ("Солнце", "Солнце — это звезда, вокруг которой вращается Земля.", "https://upload.wikimedia.org/wikipedia/commons/c/c3/Sun_white.jpg"),
+        ("Марс", "Марс — четвёртая планета от Солнца.", "https://upload.wikimedia.org/wikipedia/commons/0/02/OSIRIS_Mars_true_color.jpg"),
+        ("Космонавт", "Космонавт — человек, который путешествует в космос.", "https://upload.wikimedia.org/wikipedia/commons/d/d3/Astronaut-EVA.jpg"),
+        ("Телескоп", "Телескоп позволяет наблюдать далекие объекты во Вселенной.", "https://upload.wikimedia.org/wikipedia/commons/e/ef/HST-SM4.jpeg")
     ]
 
     for i in range(slide_count):
         slide = prs.slides.add_slide(prs.slide_layouts[6])
+        title, desc, img_url = content_examples[i % len(content_examples)]
 
         # Прямоугольник под текст
         shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.5), Inches(1), Inches(7), Inches(4))
         shape.fill.solid()
         shape.fill.fore_color.rgb = bg_color
         text_frame = shape.text_frame
-        text_frame.text, desc = content_examples[i % len(content_examples)]
+        text_frame.text = title
         p = text_frame.add_paragraph()
         p.text = desc
         p.font.size = Pt(24)
         p.font.color.rgb = font_color
 
-        # Добавим пример изображения через URL
-        img_url = "https://upload.wikimedia.org/wikipedia/commons/9/99/Moon.jpg"  # пример
-        response = requests.get(img_url)
-        if response.status_code == 200:
+        # Добавим изображение с таймаутом
+        try:
+            response = requests.get(img_url, timeout=5)
+            response.raise_for_status()
             img_stream = BytesIO(response.content)
             slide.shapes.add_picture(img_stream, Inches(8), Inches(1), width=Inches(7), height=Inches(4))
+        except Exception as e:
+            print(f"Ошибка загрузки картинки: {e}")
 
     os.makedirs("presentations", exist_ok=True)
     output_path = f"presentations/{chat_id}_{topic}.pptx"
@@ -157,6 +160,6 @@ def style_chosen(call):
     with open(output_path, "rb") as f:
         bot.send_document(chat_id, f)
 
-# --------------------- Запуск бота ---------------------
-print("Shark бот запущен...")
-bot.infinity_polling()
+# --------------------- Запуск бота безопасно ---------------------
+print("Shark 4.1 бот запущен...")
+bot.infinity_polling(timeout=60, long_polling_timeout=60)
