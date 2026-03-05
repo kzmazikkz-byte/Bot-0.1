@@ -1,7 +1,7 @@
 import telebot
 from telebot import types
 from pptx import Presentation
-from pptx.util import Inches, Pt
+from pptx.util import Inches
 import requests
 import os
 import random
@@ -83,13 +83,13 @@ def generate_presentation(message):
     topic = user_data[message.chat.id]["topic"]
     style = user_data[message.chat.id]["style"]
 
-    # Общий прогресс подготовки
+    # Общий прогресс
     total_progress_msg = send_progress(message, steps=5, total_time=5, text_prefix="⚡ Подготавливаю презентацию…")
 
-    # Прогресс генерации текста слайдов
+    # Прогресс генерации текста
     text_progress_msg = bot.send_message(message.chat.id, "🧠 Генерация текста слайдов через ИИ: 0%")
     for i in range(1, 11):
-        time.sleep(0.5)  # имитация прогресса генерации текста
+        time.sleep(0.5)
         try:
             bot.edit_message_text(f"🧠 Генерация текста слайдов через ИИ: {i*10}%", 
                                   chat_id=message.chat.id, 
@@ -97,13 +97,13 @@ def generate_presentation(message):
         except:
             pass
 
-    # Запрос к OpenAI
+    # Новый синтаксис openai>=1.0.0
     try:
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": f"Сделай презентацию на тему '{topic}' из {count} слайдов. Дай текст для каждого слайда в виде списка."}]
         )
-        slides_text = response.choices[0].message.content.split("\n")
+        slides_text = response.choices[0].message["content"].split("\n")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка генерации текста: {e}")
         return
@@ -141,11 +141,11 @@ def generate_presentation(message):
         except:
             pass
 
-    # Сохраняем файл в доступную рабочую директорию
+    # Сохраняем файл
     file_name = f"/tmp/shark_v4_{random.randint(1000,9999)}.pptx"
     prs.save(file_name)
 
-    # Отправка презентации с проверкой
+    # Отправка презентации
     try:
         with open(file_name, "rb") as f:
             bot.send_document(message.chat.id, f)
