@@ -21,22 +21,15 @@ bot = telebot.TeleBot(TOKEN)
 user_data = {}
 
 # ----------------------
-# Функция прогресса
+# Функция прогресса общего
 # ----------------------
-def send_progress(message, steps=10, total_time=15):
-    """
-    Показывает прогресс в Telegram.
-    steps - количество шагов прогресса
-    total_time - примерное время генерации (сек)
-    """
-    msg = bot.send_message(message.chat.id, "⚡ Генерирую презентацию… 0%")
+def send_progress(message, steps=10, total_time=15, text_prefix="Генерирую презентацию…"):
+    msg = bot.send_message(message.chat.id, f"{text_prefix} 0%")
     for i in range(1, steps+1):
         time.sleep(total_time/steps)
         percent = int(i/steps*100)
         try:
-            bot.edit_message_text(f"⚡ Генерирую презентацию… {percent}%", 
-                                  chat_id=message.chat.id, 
-                                  message_id=msg.message_id)
+            bot.edit_message_text(f"{text_prefix} {percent}%", chat_id=message.chat.id, message_id=msg.message_id)
         except:
             pass
     return msg
@@ -58,7 +51,7 @@ def start(message):
 # ----------------------
 # Создание презентации
 # ----------------------
-@bot.message_handler(func=lambda m: m.text == "🦈 Создать презентацию")
+@bot.message_handler(func=lambda m: m.text=="🦈 Создать презентацию")
 def create_presentation(message):
     msg = bot.send_message(message.chat.id, "📚 Напишите тему презентации:")
     bot.register_next_step_handler(msg, choose_style)
@@ -87,24 +80,32 @@ def generate_presentation(message):
 
     topic = user_data[message.chat.id]["topic"]
     style = user_data[message.chat.id]["style"]
-    
-    # Прогресс
-    progress_msg = send_progress(message, steps=10, total_time=15)
-    
-    bot.send_message(message.chat.id, "🧠 Генерирую текст слайдов через ИИ...")
 
-    # Запрос к OpenAI для текста слайдов
+    # Общий прогресс генерации
+    total_progress_msg = send_progress(message, steps=5, total_time=5, text_prefix="⚡ Подготавливаю презентацию…")
+
+    # Прогресс генерации текста слайдов через ИИ
+    text_progress_msg = bot.send_message(message.chat.id, "🧠 Генерация текста слайдов через ИИ: 0%")
+    for i in range(1, 11):
+        time.sleep(0.5)  # имитация прогресса генерации текста
+        try:
+            bot.edit_message_text(f"🧠 Генерация текста слайдов через ИИ: {i*10}%", 
+                                  chat_id=message.chat.id, 
+                                  message_id=text_progress_msg.message_id)
+        except:
+            pass
+
+    # Запрос к OpenAI
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": f"Сделай презентацию на тему '{topic}' из {count} слайдов. Дай текст для каждого слайда в виде списка."}]
     )
-
     slides_text = response.choices[0].message.content.split("\n")
-    
+
+    # Создание презентации
     prs = Presentation()
-    
     for i in range(count):
-        slide_layout = prs.slide_layouts[5]  # пустой слайд
+        slide_layout = prs.slide_layouts[5]
         slide = prs.slides.add_slide(slide_layout)
         
         # Заголовок
@@ -116,11 +117,10 @@ def generate_presentation(message):
             body = slide.placeholders[1]
             body.text = slides_text[i] if i < len(slides_text) else topic
         except:
-            # если нет placeholders, создаем textbox
             textbox = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(8), Inches(2))
             textbox.text = slides_text[i] if i < len(slides_text) else topic
-
-        # Добавление картинки
+        
+        # Картинка
         try:
             img_url = f"https://source.unsplash.com/800x600/?{topic}"
             img_data = requests.get(img_url).content
@@ -131,15 +131,17 @@ def generate_presentation(message):
             slide.shapes.add_picture(temp_file, Inches(6), Inches(2), height=Inches(3))
         except:
             pass
-    
+
     file_name = f"shark_v4_{random.randint(1000,9999)}.pptx"
     prs.save(file_name)
-    
+
+    # Отправка презентации
     bot.send_document(message.chat.id, open(file_name, "rb"))
-    
-    # удаляем прогресс
+
+    # Удаление сообщений прогресса
     try:
-        bot.delete_message(message.chat.id, progress_msg.message_id)
+        bot.delete_message(message.chat.id, total_progress_msg.message_id)
+        bot.delete_message(message.chat.id, text_progress_msg.message_id)
     except:
         pass
 
