@@ -21,7 +21,7 @@ bot = telebot.TeleBot(TOKEN)
 user_data = {}
 
 # ----------------------
-# Функция прогресса общего
+# Функция прогресса
 # ----------------------
 def send_progress(message, steps=10, total_time=15, text_prefix="Генерирую презентацию…"):
     msg = bot.send_message(message.chat.id, f"{text_prefix} 0%")
@@ -74,6 +74,8 @@ def choose_slides(message):
 def generate_presentation(message):
     try:
         count = int(message.text)
+        if not 1 <= count <= 10:
+            raise ValueError
     except:
         bot.send_message(message.chat.id, "❌ Введите число от 1 до 10.")
         return
@@ -81,10 +83,10 @@ def generate_presentation(message):
     topic = user_data[message.chat.id]["topic"]
     style = user_data[message.chat.id]["style"]
 
-    # Общий прогресс генерации
+    # Общий прогресс подготовки
     total_progress_msg = send_progress(message, steps=5, total_time=5, text_prefix="⚡ Подготавливаю презентацию…")
 
-    # Прогресс генерации текста слайдов через ИИ
+    # Прогресс генерации текста слайдов
     text_progress_msg = bot.send_message(message.chat.id, "🧠 Генерация текста слайдов через ИИ: 0%")
     for i in range(1, 11):
         time.sleep(0.5)  # имитация прогресса генерации текста
@@ -96,22 +98,29 @@ def generate_presentation(message):
             pass
 
     # Запрос к OpenAI
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": f"Сделай презентацию на тему '{topic}' из {count} слайдов. Дай текст для каждого слайда в виде списка."}]
-    )
-    slides_text = response.choices[0].message.content.split("\n")
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": f"Сделай презентацию на тему '{topic}' из {count} слайдов. Дай текст для каждого слайда в виде списка."}]
+        )
+        slides_text = response.choices[0].message.content.split("\n")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка генерации текста: {e}")
+        return
 
     # Создание презентации
     prs = Presentation()
     for i in range(count):
         slide_layout = prs.slide_layouts[5]
         slide = prs.slides.add_slide(slide_layout)
-        
+
         # Заголовок
-        title = slide.shapes.title
-        title.text = f"{topic} – слайд {i+1}"
-        
+        try:
+            title = slide.shapes.title
+            title.text = f"{topic} – слайд {i+1}"
+        except:
+            pass
+
         # Текст
         try:
             body = slide.placeholders[1]
@@ -119,24 +128,29 @@ def generate_presentation(message):
         except:
             textbox = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(8), Inches(2))
             textbox.text = slides_text[i] if i < len(slides_text) else topic
-        
+
         # Картинка
         try:
             img_url = f"https://source.unsplash.com/800x600/?{topic}"
             img_data = requests.get(img_url).content
             img_stream = BytesIO(img_data)
             img = Image.open(img_stream)
-            temp_file = f"temp_{i}.png"
+            temp_file = f"/tmp/temp_{i}.png"
             img.save(temp_file)
             slide.shapes.add_picture(temp_file, Inches(6), Inches(2), height=Inches(3))
         except:
             pass
 
-    file_name = f"shark_v4_{random.randint(1000,9999)}.pptx"
+    # Сохраняем файл в доступную рабочую директорию
+    file_name = f"/tmp/shark_v4_{random.randint(1000,9999)}.pptx"
     prs.save(file_name)
 
-    # Отправка презентации
-    bot.send_document(message.chat.id, open(file_name, "rb"))
+    # Отправка презентации с проверкой
+    try:
+        with open(file_name, "rb") as f:
+            bot.send_document(message.chat.id, f)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка при отправке презентации: {e}")
 
     # Удаление сообщений прогресса
     try:
