@@ -2,15 +2,19 @@ import telebot
 from telebot import types
 from pptx import Presentation
 from pptx.util import Inches
-import os
 import requests
+import os
 import random
+import openai
 
 TOKEN = os.environ["TOKEN"]
+OPENAI_KEY = os.environ["OPENAI_KEY"]
+
+openai.api_key = OPENAI_KEY
 
 bot = telebot.TeleBot(TOKEN)
 
-users = {}
+user_data = {}
 
 # старт
 @bot.message_handler(commands=['start'])
@@ -21,11 +25,11 @@ def start(message):
 
     bot.send_message(
         message.chat.id,
-        "🦈 Shark AI\n\nЯ создаю профессиональные презентации.\n\nНажмите кнопку ниже.",
+        "🦈 Shark AI\n\nЯ создаю профессиональные презентации с помощью ИИ.",
         reply_markup=kb
     )
 
-# создать презентацию
+# создать
 @bot.message_handler(func=lambda m: m.text == "🦈 Создать презентацию")
 def topic(message):
 
@@ -34,17 +38,17 @@ def topic(message):
 
 def style(message):
 
-    users[message.chat.id] = {"topic":message.text}
+    user_data[message.chat.id] = {"topic":message.text}
 
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("🌙 Dark","☀ Light","💜 Neon")
 
-    msg = bot.send_message(message.chat.id,"🎨 Выберите стиль",reply_markup=kb)
+    msg = bot.send_message(message.chat.id,"🎨 Выберите стиль")
     bot.register_next_step_handler(msg,slides)
 
 def slides(message):
 
-    users[message.chat.id]["style"] = message.text
+    user_data[message.chat.id]["style"] = message.text
 
     msg = bot.send_message(message.chat.id,"📑 Сколько слайдов? (1-10)")
     bot.register_next_step_handler(msg,generate)
@@ -53,39 +57,35 @@ def generate(message):
 
     count = int(message.text)
 
-    topic = users[message.chat.id]["topic"]
-    style = users[message.chat.id]["style"]
+    topic = user_data[message.chat.id]["topic"]
 
-    bot.send_message(message.chat.id,"⚡ Генерирую презентацию...")
+    bot.send_message(message.chat.id,"⚡ ИИ генерирует презентацию...")
+
+    # запрос к ИИ
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role":"user","content":f"Сделай структуру презентации на тему {topic} из {count} слайдов"}
+        ]
+    )
+
+    text = response.choices[0].message.content
+
+    slides_text = text.split("\n")
 
     prs = Presentation()
 
     for i in range(count):
 
-        slide_layout = prs.slide_layouts[6]
+        slide_layout = prs.slide_layouts[5]
         slide = prs.slides.add_slide(slide_layout)
 
-        title = slide.shapes.add_textbox(
-            Inches(0.5),
-            Inches(0.3),
-            Inches(8),
-            Inches(1)
-        )
+        title = slide.shapes.title
+        title.text = f"{topic} {i+1}"
 
-        tf = title.text_frame
-        tf.text = f"{topic} — часть {i+1}"
+        body = slide.placeholders[1]
+        body.text = slides_text[i] if i < len(slides_text) else topic
 
-        text = slide.shapes.add_textbox(
-            Inches(4.5),
-            Inches(2),
-            Inches(5),
-            Inches(3)
-        )
-
-        body = text.text_frame
-        body.text = f"Описание темы {topic}. Этот слайд объясняет важную часть темы."
-
-        # картинка
         try:
 
             img_url = f"https://source.unsplash.com/800x600/?{topic}"
@@ -98,7 +98,7 @@ def generate(message):
 
             slide.shapes.add_picture(
                 img_name,
-                Inches(0.5),
+                Inches(6),
                 Inches(2),
                 height=Inches(3)
             )
@@ -106,10 +106,10 @@ def generate(message):
         except:
             pass
 
-    filename = f"presentation_{random.randint(1000,9999)}.pptx"
+    file = f"shark_{random.randint(1000,9999)}.pptx"
 
-    prs.save(filename)
+    prs.save(file)
 
-    bot.send_document(message.chat.id,open(filename,"rb"))
+    bot.send_document(message.chat.id,open(file,"rb"))
 
 bot.infinity_polling()
