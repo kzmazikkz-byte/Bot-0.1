@@ -1,165 +1,180 @@
 import os
-import json
-from telebot import TeleBot, types
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
-from pptx.enum.shapes import MSO_SHAPE
-import requests
-from io import BytesIO
 
 TOKEN = os.environ.get("TOKEN")
-if not TOKEN:
-    raise ValueError("Переменная окружения TOKEN не установлена!")
 
-bot = TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN)
 
-USERS_FILE = "users.json"
+user_data = {}
 
-# --------------------- Работа с пользователями ---------------------
-def load_json(file):
-    try:
-        with open(file, "r") as f:
-            return json.load(f)
-    except:
-        return {}
-
-def save_json(file, data):
-    with open(file, "w") as f:
-        json.dump(data, f, indent=2)
-
-users = load_json(USERS_FILE)
-
-# --------------------- Команды ---------------------
+# старт
 @bot.message_handler(commands=['start'])
 def start(message):
-    chat_id = message.chat.id
-    bot.send_message(chat_id,
-        "Привет! 🦈 Shark 4.1 — бот для генерации презентаций с картинками и описаниями.\n"
-        "Используй /generate чтобы создать презентацию.\n"
-        "Список команд: /help")
 
-@bot.message_handler(commands=['help'])
-def help_cmd(message):
-    chat_id = message.chat.id
-    help_text = (
-        "/start - приветствие\n"
-        "/generate - создать презентацию\n"
-        "/help - список команд"
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🧠 Создать презентацию", callback_data="create"))
+
+    bot.send_message(
+        message.chat.id,
+        "🦈 Shark AI\n\nЯ создаю презентации по твоему описанию.\n\nНажми кнопку ниже чтобы начать.",
+        reply_markup=kb
     )
-    bot.send_message(chat_id, help_text)
 
-# --------------------- Генерация презентации ---------------------
-@bot.message_handler(commands=['generate'])
-def generate(message):
-    chat_id = message.chat.id
-    bot.send_message(chat_id, "Напиши тему презентации (например 'Космос').")
-    bot.register_next_step_handler(message, ask_slides)
 
-def ask_slides(message):
-    chat_id = message.chat.id
-    topic = message.text.strip()
-    if not topic:
-        bot.send_message(chat_id, "Ошибка: введи тему презентации.")
+# кнопка создать
+@bot.callback_query_handler(func=lambda call: call.data == "create")
+def create_presentation(call):
+
+    bot.send_message(
+        call.message.chat.id,
+        "✏️ Напиши тему презентации.\n\nПример:\nКосмос"
+    )
+
+    user_data[call.message.chat.id] = {"step": "theme"}
+
+
+# тема
+@bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get("step") == "theme")
+def get_theme(message):
+
+    user_data[message.chat.id]["theme"] = message.text
+    user_data[message.chat.id]["step"] = "slides"
+
+    bot.send_message(
+        message.chat.id,
+        "📊 Сколько слайдов?\n\nОтправь число от 3 до 10"
+    )
+
+
+# количество слайдов
+@bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get("step") == "slides")
+def get_slides(message):
+
+    try:
+        slides = int(message.text)
+
+        if slides < 1 or slides > 20:
+            bot.send_message(message.chat.id, "❌ Введи число от 1 до 20")
+            return
+
+    except:
+        bot.send_message(message.chat.id, "❌ Нужно число")
         return
-    users[chat_id] = {"topic": topic}
-    save_json(USERS_FILE, users)
 
-    # Кнопки с количеством слайдов
-    keyboard = types.InlineKeyboardMarkup(row_width=5)
-    buttons = [types.InlineKeyboardButton(str(i), callback_data=f"slides_{i}") for i in range(1, 11)]
-    keyboard.add(*buttons)
-    bot.send_message(chat_id, "Выбери количество слайдов (1-10):", reply_markup=keyboard)
+    user_data[message.chat.id]["slides"] = slides
+    user_data[message.chat.id]["step"] = "done"
 
-# --------------------- Обработка выбора слайдов ---------------------
-@bot.callback_query_handler(func=lambda call: call.data.startswith("slides_"))
-def slides_chosen(call):
-    bot.answer_callback_query(call.id)
-    chat_id = call.message.chat.id
-    slide_count = int(call.data.replace("slides_", ""))
-    users[chat_id]["slides"] = slide_count
-    save_json(USERS_FILE, users)
+    generate_presentation(message)
 
-    # Кнопки выбора стиля
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("Dark", callback_data="style_dark"))
-    keyboard.add(types.InlineKeyboardButton("Light", callback_data="style_light"))
-    keyboard.add(types.InlineKeyboardButton("Minimal", callback_data="style_minimal"))
-    keyboard.add(types.InlineKeyboardButton("Cyberpunk", callback_data="style_cyberpunk"))
-    bot.send_message(chat_id, "Выбери стиль презентации:", reply_markup=keyboard)
 
-# --------------------- Генерация PPTX с картинками и описанием ---------------------
-@bot.callback_query_handler(func=lambda call: call.data.startswith("style_"))
-def style_chosen(call):
-    bot.answer_callback_query(call.id, text="Стиль выбран!")
-    chat_id = call.message.chat.id
-    style = call.data.replace("style_", "")
-    users[chat_id]["style"] = style
-    save_json(USERS_FILE, users)
+# генерация
+def generate_presentation(message):
 
-    topic = users[chat_id]["topic"]
-    slide_count = users[chat_id]["slides"]
+    theme = user_data[message.chat.id]["theme"]
+    slides_count = user_data[message.chat.id]["slides"]
 
     prs = Presentation()
-    prs.slide_width = Inches(16)
-    prs.slide_height = Inches(9)
 
-    # Цвета по стилю
-    if style == "dark":
-        bg_color = RGBColor(20, 20, 20)
-        font_color = RGBColor(255, 255, 255)
-    elif style == "light":
-        bg_color = RGBColor(255, 255, 255)
-        font_color = RGBColor(0, 0, 0)
-    elif style == "minimal":
-        bg_color = RGBColor(240, 240, 240)
-        font_color = RGBColor(30, 30, 30)
-    else:  # cyberpunk
-        bg_color = RGBColor(0, 0, 0)
-        font_color = RGBColor(255, 0, 255)
+    slides_text = []
 
-    # Контент с текстом и картинками
-    content_examples = [
-        ("Луна", "Луна — это естественный спутник Земли.", "https://upload.wikimedia.org/wikipedia/commons/9/99/Moon.jpg"),
-        ("Солнце", "Солнце — это звезда, вокруг которой вращается Земля.", "https://upload.wikimedia.org/wikipedia/commons/c/c3/Sun_white.jpg"),
-        ("Марс", "Марс — четвёртая планета от Солнца.", "https://upload.wikimedia.org/wikipedia/commons/0/02/OSIRIS_Mars_true_color.jpg"),
-        ("Космонавт", "Космонавт — человек, который путешествует в космос.", "https://upload.wikimedia.org/wikipedia/commons/d/d3/Astronaut-EVA.jpg"),
-        ("Телескоп", "Телескоп позволяет наблюдать далекие объекты во Вселенной.", "https://upload.wikimedia.org/wikipedia/commons/e/ef/HST-SM4.jpeg")
-    ]
+    for i in range(slides_count):
 
-    for i in range(slide_count):
-        slide = prs.slides.add_slide(prs.slide_layouts[6])
-        title, desc, img_url = content_examples[i % len(content_examples)]
+        title = f"{theme} — часть {i+1}"
 
-        # Прямоугольник под текст
-        shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.5), Inches(1), Inches(7), Inches(4))
-        shape.fill.solid()
-        shape.fill.fore_color.rgb = bg_color
-        text_frame = shape.text_frame
-        text_frame.text = title
-        p = text_frame.add_paragraph()
-        p.text = desc
-        p.font.size = Pt(24)
-        p.font.color.rgb = font_color
+        text = f"Описание темы {theme}. Этот слайд объясняет важную часть темы."
 
-        # Добавим изображение с таймаутом
-        try:
-            response = requests.get(img_url, timeout=5)
-            response.raise_for_status()
-            img_stream = BytesIO(response.content)
-            slide.shapes.add_picture(img_stream, Inches(8), Inches(1), width=Inches(7), height=Inches(4))
-        except Exception as e:
-            print(f"Ошибка загрузки картинки: {e}")
+        slide_layout = prs.slide_layouts[1]
+        slide = prs.slides.add_slide(slide_layout)
 
-    os.makedirs("presentations", exist_ok=True)
-    output_path = f"presentations/{chat_id}_{topic}.pptx"
-    prs.save(output_path)
+        slide.shapes.title.text = title
+        slide.placeholders[1].text = text
 
-    bot.send_message(chat_id, f"Готово! Презентация создана: {topic}.pptx")
-    with open(output_path, "rb") as f:
-        bot.send_document(chat_id, f)
+        slides_text.append(text)
 
-# --------------------- Запуск бота безопасно ---------------------
-print("Shark 4.1 бот запущен...")
-bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    file_name = f"presentation_{message.chat.id}.pptx"
+
+    prs.save(file_name)
+
+    user_data[message.chat.id]["slides_text"] = slides_text
+
+    kb = InlineKeyboardMarkup()
+
+    kb.add(InlineKeyboardButton("✏️ Изменить слайд", callback_data="edit"))
+    kb.add(InlineKeyboardButton("✅ Скачать презентацию", callback_data="download"))
+
+    bot.send_message(
+        message.chat.id,
+        "✅ Презентация создана!\n\nТы можешь изменить любой слайд.",
+        reply_markup=kb
+    )
+
+
+# редактировать
+@bot.callback_query_handler(func=lambda call: call.data == "edit")
+def edit_slide(call):
+
+    slides = user_data[call.message.chat.id]["slides"]
+
+    kb = InlineKeyboardMarkup()
+
+    for i in range(slides):
+        kb.add(
+            InlineKeyboardButton(
+                f"Слайд {i+1}",
+                callback_data=f"slide_{i}"
+            )
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        "Выбери слайд для изменения",
+        reply_markup=kb
+    )
+
+
+# выбор слайда
+@bot.callback_query_handler(func=lambda call: call.data.startswith("slide_"))
+def slide_selected(call):
+
+    slide_index = int(call.data.split("_")[1])
+
+    user_data[call.message.chat.id]["edit_slide"] = slide_index
+    user_data[call.message.chat.id]["step"] = "editing"
+
+    bot.send_message(
+        call.message.chat.id,
+        f"✏️ Напиши новый текст для слайда {slide_index+1}"
+    )
+
+
+# изменение текста
+@bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get("step") == "editing")
+def save_edit(message):
+
+    slide_index = user_data[message.chat.id]["edit_slide"]
+
+    user_data[message.chat.id]["slides_text"][slide_index] = message.text
+
+    user_data[message.chat.id]["step"] = "done"
+
+    bot.send_message(
+        message.chat.id,
+        "✅ Слайд обновлён!"
+    )
+
+
+# скачать
+@bot.callback_query_handler(func=lambda call: call.data == "download")
+def download(call):
+
+    file_name = f"presentation_{call.message.chat.id}.pptx"
+
+    with open(file_name, "rb") as f:
+        bot.send_document(call.message.chat.id, f)
+
+
+print("Shark AI запущен")
+
+bot.infinity_polling()
