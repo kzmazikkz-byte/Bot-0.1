@@ -1,4 +1,4 @@
 pyTelegramBotAPI
 python-pptx
 requests
-Pillow
+openai
